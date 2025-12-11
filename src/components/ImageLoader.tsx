@@ -80,7 +80,7 @@ export function ImageLoader({
         // @ts-expect-error fetchpriority is valid
         fetchpriority={loading === 'eager' ? 'high' : 'auto'}
         onLoad={handleImageLoad}
-        className={`w-full h-full object-${objectFit} object-center transition-all duration-700 ease-out ${imgClassName}
+        className={`w-full h-full object-${objectFit} object-center transition-all duration-1000 ease-out ${imgClassName}
           ${imageLoaded ? 'opacity-100' : 'opacity-0'}
         `}
       />

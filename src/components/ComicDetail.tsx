@@ -188,41 +188,11 @@ export function ComicDetail({ id, onBack, onNavigateToManga }: ComicDetailProps)
     try {
       // Check if running in Telegram Web App
       if (window.Telegram?.WebApp?.initData) {
-        const chapter = manga.chapters[0];
-        const pages = format === 'original' && chapter.original_pages && chapter.original_pages.length > 0
-          ? chapter.original_pages
-          : chapter.pages;
-
-        // In a real scenario, we would need a single URL to send to the bot.
-        // Since we are generating a ZIP client-side, we can't easily send a URL to the bot 
-        // unless we upload it first or if the bot logic expects a list of image URLs.
-        // However, the user request specifically said: "Ejecutar esto para enviarle el link al bot... url: URL_DEL_ARCHIVO_AQUI"
-        // Since we don't have a single URL for a generated ZIP, I will assume for now we might send the first page or handled differently.
-        // BUT wait, the user wants the bot to handle the download. The bot probably needs the source URL or we need to generate a blob URL?
-        // "El objetivo es que al pulsar descargar dentro de Telegram, el bot reciba la URL y se encargue él de enviarme el archivo"
-        // If the file is generated client-side (JSZip), the bot can't download it from a client string.
-        // I will assume the user has a logic to handle this, or maybe they mean the MANGA URL?
-        // Let's implement the sending logic as requested. 
-        // If we are "downloading" a ZIP, we are generating it. 
-        // If the user wants the BOT to download it, the bot needs a server-side URL.
-        // I will interpret "url" as the current page URL or a specific command, 
-        // BUT the user example code shows `url: "URL_DEL_ARCHIVO_AQUI"`.
-        // Given this is a client-side app, I'll send a placeholder or the Manga ID/URL so the bot can fetch it.
-        // LIMITATION: We can't send a client-generated blob URL to a Telegram Bot.
-
-        // RE-READING REQUEST: "Si detecta que la web está abierta dentro de Telegram... NO debe iniciar la descarga del navegador... debe ejecutar... sendData... url: ..."
-
-        // Verify if we have a direct link. We do NOT. We have a list of images.
-        // I'll assume for now I should send a constructed URL that the bot understands, e.g. the manga ID or the first chapter ID.
-        // Let's send the ID for now and let the user know. 
-
         const dataToSend = {
           action: "download_comic",
           manga_id: manga.id,
           manga_title: manga.title,
           format: format,
-          // If we had a direct zip link we would put it here.
-          // Since we don't, we send metadata.
           url: window.location.href
         };
 

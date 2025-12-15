@@ -1,7 +1,10 @@
-import { X, Key, Trash2, Save, Settings, Shield, Lock, Unlock, Megaphone, Clock } from 'lucide-react';
+import { X, Key, Trash2, Save, Settings, Shield, Lock, Unlock, Megaphone, Clock, LogOut, UserPlus, UserMinus } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { getUserApiKey, saveUserApiKey, deleteUserApiKey } from '../utils/apiKeyManager';
 import { saveAnnouncement } from '../services/announcement';
+import { auth, googleProvider } from '../lib/firebase';
+import { signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { isUserAdmin, addAdminEmail, removeAdminEmail, getAllowedEmails } from '../services/admin';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -11,7 +14,7 @@ interface SettingsModalProps {
 }
 
 // SHA-256 Hash for 'Loyola069012*'
-const ADMIN_HASH = '8c622f58501187271067227f7fff405e1f9d630d5722bd529a4bc993cdfaa511';
+
 
 export function SettingsModal({ isOpen, onClose, isAdmin, onAdminChange }: SettingsModalProps) {
     // API Key State
@@ -19,9 +22,13 @@ export function SettingsModal({ isOpen, onClose, isAdmin, onAdminChange }: Setti
     const [hasUserApiKey, setHasUserApiKey] = useState(false);
 
     // Admin Config State
+    const [isLoadingAuth, setIsLoadingAuth] = useState(false);
+    const [authError, setAuthError] = useState('');
+    const [emailInput, setEmailInput] = useState('');
     const [passwordInput, setPasswordInput] = useState('');
-    const [showPasswordInput, setShowPasswordInput] = useState(false);
-    const [error, setError] = useState('');
+    const [adminEmails, setAdminEmails] = useState<string[]>([]);
+    const [newAdminEmail, setNewAdminEmail] = useState('');
+    const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
     // Announcement State
     const [announcementText, setAnnouncementText] = useState('');
@@ -43,11 +50,30 @@ export function SettingsModal({ isOpen, onClose, isAdmin, onAdminChange }: Setti
             }
 
             // Admin init
-            setShowPasswordInput(false);
+            setAuthError('');
+            setEmailInput('');
             setPasswordInput('');
-            setError('');
+
+            // Check current auth status
+            const user = auth.currentUser;
+            if (user) {
+                setCurrentUserEmail(user.email);
+                if (isAdmin) {
+                    loadAdminEmails();
+                }
+            } else {
+                if (isAdmin) {
+                    // If stored state is admin but no firebase user, logout
+                    onAdminChange(false);
+                }
+            }
         }
     }, [isOpen]);
+
+    const loadAdminEmails = async () => {
+        const emails = await getAllowedEmails();
+        setAdminEmails(emails);
+    };
 
     const handleSaveApiKey = () => {
         if (!apiKey.trim()) {
@@ -67,39 +93,150 @@ export function SettingsModal({ isOpen, onClose, isAdmin, onAdminChange }: Setti
         }
     };
 
-    const verifyPassword = async (password: string) => {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(password);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        return hashHex === ADMIN_HASH;
-    };
+    const handleGoogleLogin = async () => {
+        setIsLoadingAuth(true);
+        setAuthError('');
+        try {
+            const result = await signInWithPopup(auth, googleProvider);
+            const email = result.user.email;
 
-    const handleAdminToggle = async () => {
-        if (isAdmin) {
-            // Turn off admin mode
-            onAdminChange(false);
-            setShowPasswordInput(false);
-        } else {
-            // Show password input to enable
-            setShowPasswordInput(true);
+            if (!email) {
+                throw new Error('No se pudo obtener el email.');
+            }
+
+            const hasPermission = await isUserAdmin(email);
+
+            if (hasPermission) {
+                onAdminChange(true);
+                setCurrentUserEmail(email);
+                await loadAdminEmails();
+            } else {
+                await signOut(auth); // Logout immediately if not allowed
+                setAuthError('Este correo no tiene permisos de administrador.');
+                onAdminChange(false);
+            }
+        } catch (error: any) {
+            console.error('Login error:', error);
+            setAuthError(error.message || 'Error al iniciar sesión.');
+        } finally {
+            setIsLoadingAuth(false);
         }
     };
 
-    const handlePasswordSubmit = async () => {
-        if (!passwordInput) return;
+    const handleEmailLogin = async () => {
+        if (!emailInput || !passwordInput) {
+            setAuthError('Por favor ingresa correo y contraseña.');
+            return;
+        }
 
-        const isValid = await verifyPassword(passwordInput);
+        setIsLoadingAuth(true);
+        setAuthError('');
+        try {
+            const result = await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
+            const email = result.user.email;
 
-        if (isValid) {
-            onAdminChange(true);
-            setShowPasswordInput(false);
-            setPasswordInput('');
-            setError('');
-        } else {
-            setError('Contraseña incorrecta');
-            setPasswordInput('');
+            if (!email) {
+                throw new Error('No se pudo obtener el email.');
+            }
+
+            const hasPermission = await isUserAdmin(email);
+
+            if (hasPermission) {
+                onAdminChange(true);
+                setCurrentUserEmail(email);
+                await loadAdminEmails();
+            } else {
+                await signOut(auth); // Logout immediately if not allowed
+                setAuthError('Este correo no tiene permisos de administrador.');
+                onAdminChange(false);
+            }
+        } catch (error: any) {
+            console.error('Login error:', error);
+            if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
+                setAuthError('Cuenta no encontrada o contraseña incorrecta. Si es tu primera vez, usa "Registrarse".');
+            } else {
+                setAuthError(error.message || 'Error al iniciar sesión.');
+            }
+        } finally {
+            setIsLoadingAuth(false);
+        }
+    };
+
+    const handleRegister = async () => {
+        if (!emailInput || !passwordInput) {
+            setAuthError('Ingresa un correo y contraseña para registrarte.');
+            return;
+        }
+
+        setIsLoadingAuth(true);
+        setAuthError('');
+        try {
+            // 1. Create User
+            const result = await createUserWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
+            const email = result.user.email;
+
+            if (!email) throw new Error('Error al obtener email.');
+
+            // 2. Verify if Allowed
+            const hasPermission = await isUserAdmin(email);
+
+            if (hasPermission) {
+                onAdminChange(true);
+                setCurrentUserEmail(email);
+                await loadAdminEmails();
+                alert('Cuenta creada y verificada exitosamente.');
+            } else {
+                // If not allowed, delete/logout immediately 
+                // (Deleting user requires re-auth usually, so we just sign out for now to block access)
+                await signOut(auth);
+                setAuthError('Cuenta creada, pero tu correo NO está autorizado como administrador.');
+                onAdminChange(false);
+            }
+
+        } catch (error: any) {
+            console.error('Register error:', error);
+            if (error.code === 'auth/email-already-in-use') {
+                setAuthError('Este correo ya está registrado. Intenta "Ingresar".');
+            } else if (error.code === 'auth/weak-password') {
+                setAuthError('La contraseña debe tener al menos 6 caracteres.');
+            } else {
+                setAuthError(error.message || 'Error al registrar.');
+            }
+        } finally {
+            setIsLoadingAuth(false);
+        }
+    };
+
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+            onAdminChange(false);
+            setCurrentUserEmail(null);
+            setAdminEmails([]);
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
+    };
+
+    const handleAddAdmin = async () => {
+        if (!newAdminEmail.trim()) return;
+        try {
+            await addAdminEmail(newAdminEmail.trim());
+            setNewAdminEmail('');
+            await loadAdminEmails();
+            alert('Administrador añadido correctamente.');
+        } catch (error: any) {
+            alert('Error al añadir: ' + error.message);
+        }
+    };
+
+    const handleRemoveAdmin = async (email: string) => {
+        if (!window.confirm(`¿Seguro que quieres eliminar a ${email}?`)) return;
+        try {
+            await removeAdminEmail(email);
+            await loadAdminEmails();
+        } catch (error: any) {
+            alert('Error: ' + error.message);
         }
     };
 
@@ -167,41 +304,126 @@ export function SettingsModal({ isOpen, onClose, isAdmin, onAdminChange }: Setti
                                 </div>
                                 <div>
                                     <h3 className="tex-sm font-semibold text-white">Modo Administrador</h3>
-                                    <p className="text-xs text-gray-400">Permite editar y eliminar mangas</p>
+                                    <p className="text-xs text-gray-400">
+                                        {isAdmin ? `Conectado como ${currentUserEmail}` : 'Requiere acceso autorizado'}
+                                    </p>
                                 </div>
                             </div>
 
-                            <button
-                                onClick={handleAdminToggle}
-                                className={`w-12 h-6 rounded-full transition-colors relative ${isAdmin ? 'bg-[#bb86fc]' : 'bg-gray-700'}`}
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform duration-200 ${isAdmin ? 'left-7' : 'left-1'}`} />
-                            </button>
+                            {isAdmin && (
+                                <button
+                                    onClick={handleLogout}
+                                    className="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/5 transition-colors"
+                                    title="Cerrar Sessión"
+                                >
+                                    <LogOut className="w-5 h-5" />
+                                </button>
+                            )}
                         </div>
 
-                        {showPasswordInput && !isAdmin && (
-                            <div className="bg-[#1a1a1a] p-4 rounded-xl border border-gray-800 animate-in slide-in-from-top-2 duration-200">
-                                <label className="block text-xs font-medium text-gray-400 mb-2">Contraseña de administrador</label>
-                                <div className="flex gap-2">
+                        {!isAdmin ? (
+                            <div className="bg-[#1a1a1a] p-6 rounded-xl border border-gray-800 animate-in slide-in-from-top-2 duration-200 text-center">
+                                <p className="text-sm text-gray-400 mb-4">Inicia sesión con una cuenta autorizada.</p>
+
+                                {/* Email/Password Form */}
+                                <div className="space-y-3 mb-4">
+                                    <input
+                                        type="email"
+                                        placeholder="Correo electrónico"
+                                        value={emailInput}
+                                        onChange={(e) => setEmailInput(e.target.value)}
+                                        className="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#bb86fc]"
+                                    />
                                     <input
                                         type="password"
+                                        placeholder="Contraseña"
                                         value={passwordInput}
-                                        onChange={(e) => {
-                                            setPasswordInput(e.target.value);
-                                            setError('');
-                                        }}
-                                        onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
-                                        placeholder="Ingrese contraseña..."
-                                        className="flex-1 bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#bb86fc] transition-colors"
+                                        onChange={(e) => setPasswordInput(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleEmailLogin()}
+                                        className="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#bb86fc]"
                                     />
                                     <button
-                                        onClick={handlePasswordSubmit}
-                                        className="bg-[#bb86fc] hover:bg-[#9966dd] text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                                        onClick={handleEmailLogin}
+                                        disabled={isLoadingAuth}
+                                        className="w-full bg-[#bb86fc] text-white hover:bg-[#9966dd] py-2 rounded-lg font-semibold text-sm transition-colors disabled:opacity-70"
                                     >
-                                        Activar
+                                        {isLoadingAuth ? 'Verificando...' : 'Ingresar'}
+                                    </button>
+
+                                    <button
+                                        onClick={handleRegister}
+                                        disabled={isLoadingAuth}
+                                        className="w-full bg-transparent border border-gray-600 text-gray-300 hover:border-gray-400 hover:text-white py-1.5 rounded-lg text-xs transition-colors disabled:opacity-50"
+                                    >
+                                        ¿Primera vez? Crear cuenta
                                     </button>
                                 </div>
-                                {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+
+                                <div className="flex items-center gap-2 my-4">
+                                    <div className="h-px bg-gray-800 flex-1" />
+                                    <span className="text-xs text-gray-500">O usa Google</span>
+                                    <div className="h-px bg-gray-800 flex-1" />
+                                </div>
+
+                                <button
+                                    onClick={handleGoogleLogin}
+                                    disabled={isLoadingAuth}
+                                    className="w-full bg-white text-gray-900 hover:bg-gray-100 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-70"
+                                >
+                                    {isLoadingAuth ? (
+                                        <div className="w-5 h-5 border-2 border-gray-900 border-t-transparent rounded-full animate-spin"></div>
+                                    ) : (
+                                        <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                                            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.84z" />
+                                            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                                        </svg>
+                                    )}
+                                    Iniciar con Google
+                                </button>
+                                {authError && <p className="text-red-500 text-xs mt-3 bg-red-500/10 p-2 rounded border border-red-500/20">{authError}</p>}
+                            </div>
+                        ) : (
+                            // MANAGE ADMINS SECTION (Only visible to admins)
+                            <div className="bg-[#1a1a1a] p-4 rounded-xl border border-gray-800 space-y-4">
+                                <h4 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                                    <Shield className="w-4 h-4 text-[#bb86fc]" />
+                                    Gestión de Administradores
+                                </h4>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="email"
+                                        placeholder="nuevo_admin@gmail.com"
+                                        value={newAdminEmail}
+                                        onChange={(e) => setNewAdminEmail(e.target.value)}
+                                        className="flex-1 bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#bb86fc]"
+                                    />
+                                    <button
+                                        onClick={handleAddAdmin}
+                                        disabled={!newAdminEmail.trim()}
+                                        className="bg-[#bb86fc]/20 hover:bg-[#bb86fc]/30 text-[#bb86fc] p-2 rounded-lg transition-colors disabled:opacity-50"
+                                    >
+                                        <UserPlus className="w-5 h-5" />
+                                    </button>
+                                </div>
+
+                                <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                                    {adminEmails.map(email => (
+                                        <div key={email} className="flex items-center justify-between bg-black/30 p-2 rounded-lg border border-gray-800/50">
+                                            <span className="text-xs text-gray-300 truncate">{email}</span>
+                                            {/* Don't allow removing yourself or hardcoded owners (though owners are protected in service, UI feedback is nice) */}
+                                            <button
+                                                onClick={() => handleRemoveAdmin(email)}
+                                                className="text-gray-500 hover:text-red-400 p-1 hover:bg-white/5 rounded transition-colors"
+                                                title="Eliminar admin"
+                                            >
+                                                <UserMinus className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </section>

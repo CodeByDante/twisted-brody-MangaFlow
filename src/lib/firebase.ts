@@ -12,6 +12,10 @@ const firebaseConfig = {
   measurementId: "G-N8TQ7MY42W"
 };
 
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();

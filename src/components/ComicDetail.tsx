@@ -757,7 +757,10 @@ export function ComicDetail({ id, onBack, onNavigateToManga, onMangaLoaded, isAd
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 sm:gap-2 md:gap-3 mb-6">
+                  <div
+                    key={recPage}
+                    className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5 sm:gap-2 md:gap-3 mb-6 animate-slide-in-right"
+                  >
                     {recommendations.slice((recPage - 1) * REC_ITEMS_PER_PAGE, recPage * REC_ITEMS_PER_PAGE).map((rec, index) => (
                       <div
                         key={rec.id}
